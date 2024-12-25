@@ -213,7 +213,7 @@ if __name__ == "__main__":
 
     device = 'cpu'
     if torch.cuda.is_available():
-        device = 'gpu'
+        device = 'cuda'
     elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
         device = "mps"
     
