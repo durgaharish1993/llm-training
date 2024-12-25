@@ -202,6 +202,7 @@ class Trainer:
             #import code ; code.interact(local=locals())
             loss.backward()
             self.optimer.step()
+            torch.cuda.synchronize()
             e_time = time.time()
             time_diff = (e_time - s_time) * 1000
             tok_sec   =  (B * T)/ (e_time - s_time)
@@ -222,7 +223,7 @@ if __name__ == "__main__":
     torch.manual_seed(1337)
     gpt_conf    = GPTConfig()
     gpt_model   = GPTModel(config=gpt_conf)
-    data_loader = DataLoader(B=4, T = 32)
+    data_loader = DataLoader(B=16, T = 1024)
     gpt_model.to(device)
     train_obj = Trainer(data_loader=data_loader, model=gpt_model, device=device)
     print("training loop")
