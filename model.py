@@ -183,16 +183,19 @@ class TrainConig:
     pass 
 
 class Trainer:
-    def __init__(self, data_loader, model ):
+    def __init__(self, data_loader, model, device = 'cpu' ):
         self.data_loader : DataLoader  = data_loader
         self.model       : nn.Module   = model 
         self.optimer     = torch.optim.AdamW(self.model.parameters(), lr=1e-4)
+        self.device      = device 
     def train(self):
         
         print("in training loop")
         for i in range(50):
             s_time = time.time()
             x,y = self.data_loader.next()
+            x = x.to(device)
+            y = y.to(device)
             self.optimer.zero_grad()
             (B,T) =  x.size()
             logits, loss = self.model(x,y)
@@ -207,12 +210,21 @@ class Trainer:
         
             
 if __name__ == "__main__":
+
+    device = 'cpu'
+    if torch.cuda.is_available():
+        device = 'gpu'
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        device = "mps"
+    
+    print(f"Device Used for running the code :: {device}")
+
     torch.manual_seed(1337)
     gpt_conf    = GPTConfig()
     gpt_model   = GPTModel(config=gpt_conf)
     data_loader = DataLoader(B=4, T = 32)
-
-    train_obj = Trainer(data_loader=data_loader, model=gpt_model)
+    gpt_model.to(device)
+    train_obj = Trainer(data_loader=data_loader, model=gpt_model, device=device)
     print("training loop")
     train_obj.train()
 
