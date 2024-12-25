@@ -3,8 +3,11 @@ import torch.nn.functional as F
 from dataclasses import dataclass
 import torch 
 import math 
-#from transformers import GPT2LMHeadModel
+from transformers import GPT2LMHeadModel
 import time 
+import tiktoken 
+from tiktoken import Encoding 
+from typing import List
 
 @dataclass
 class GPTConfig:
@@ -13,6 +16,7 @@ class GPTConfig:
     n_head : int      = 12
     block_size : int  = 1024 
     n_blocks  : int   = 12 
+    mode     : str    = "inference"
 
 class MLPLayer(nn.Module):
     def __init__(self, config : GPTConfig):
@@ -47,10 +51,11 @@ class SelfAttention(nn.Module):
         v = v.view(B,T,h, d ).transpose(1,2)
         att = q @ k.transpose(-1,-2) * (1/math.sqrt(d))  # (B,h,T,d) @ (B,h,d,T) -> (B,h,T,T)
         att = att.masked_fill(self.bias[:,:,:T, :T]== 0, float('-inf'))
-        out = F.softmax(att, dim=-1) @ v   # (B, h, T,T) @ (B,h, T, d)-> (B,h, T, d)
+        att_weights = F.softmax(att, dim=-1) 
+        out = att_weights @ v   # (B, h, T,T) @ (B,h, T, d)-> (B,h, T, d)
         out = out.transpose(1,2).contiguous().view(B,T,d_model) #(B,h, T,  d) -> (B, T, d_model)
         out = self.c_proj(out)
-        return out 
+        return out, att_weights
     
 class AttentionWrapper(nn.Module):
     def __init__(self,config : GPTConfig):
@@ -62,10 +67,11 @@ class AttentionWrapper(nn.Module):
         self.mlp  = MLPLayer(config)
 
     def forward(self, x : torch.Tensor):
-        x = x + self.attn(self.ln_1(x)) 
+        (out, att_weights) = self.attn(self.ln_1(x))
+        x = x + out
         x = x + self.mlp(self.ln_2(x))
 
-        return x 
+        return x, att_weights 
 
 
 class GPTModel(nn.Module):
@@ -84,7 +90,8 @@ class GPTModel(nn.Module):
         # Reference Papers - Using the Output Embedding to Improve Language Models (https://arxiv.org/pdf/1608.05859)
         # GPT2, Language Models are Unsupervised Multitask Learners (https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf)
 
-        self.apply(self._initialize_weights)
+        if config.mode == 'train':
+            self.apply(self._initialize_weights)
 
         # Residual Networks (https://arxiv.org/pdf/1512.03385)
 
@@ -122,9 +129,11 @@ class GPTModel(nn.Module):
         
         count = 0 
         out_dict = {}
+        attn_dict = {}
         for block in self.transformer.h : 
-            x = block(x)
+            x,att_weights = block(x)
             out_dict[count] = x
+            attn_dict[count] = att_weights
             count += 1  
 
         x  = self.transformer.ln_f(x)
@@ -133,10 +142,8 @@ class GPTModel(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(input= logits.view(-1,logits.size(-1)), target= targets.view(-1) )
 
-
-        RETURN_DETAILED = False 
-        if RETURN_DETAILED:
-            return_obj = logits, loss, tok_emb, pos_emb, out_dict
+        if self.config.mode == 'inference':
+            return_obj = logits, tok_emb, pos_emb, out_dict, attn_dict
         else:
             return_obj = logits, loss 
         return return_obj
@@ -208,8 +215,88 @@ class Trainer:
             tok_sec   =  (B * T)/ (e_time - s_time)
             print(f"step {i}, loss : {loss.item()}, time : {time_diff : .2f}ms, tok/sec : {tok_sec : .1f} ")
 
-        
+
+
+class Tokenizor:
+
+    def __init__(self, tokenizor = None ):
+        self.tokenizor : Encoding = tiktoken.get_encoding('gpt2') 
+
+    
+    def tokenize(self, input : str, B : int) -> torch.tensor:
+        toks = self.tokenizor.encode(input)
             
+        idx = torch.tensor([toks] *B , dtype=torch.long)
+
+
+        return idx 
+    
+    def decode(self, idx ):
+        return self.tokenizor.decode(idx)
+
+
+    
+  
+
+
+
+
+class Inference:
+    def __init__(self, model : nn.Module, tokenizor : Tokenizor,  device = 'cpu'):
+        self.model : nn.Module    = model 
+        self.device : str         = device 
+        self.tokenizor : Encoding = self._infer_tokenizor() if tokenizor is None  else tokenizor
+ 
+    def _infer_tokenizor(self):
+        pass 
+        # Return tokenizor  
+
+
+    def sample(self, idx : torch.tensor, seq_len : int ) -> None:
+        torch.manual_seed(42)
+        (B,T) = idx.size()
+        print(f"Batch Size {B}")
+        print(f"Current Token lenght {T}")
+        k = 50
+    
+        while idx.size(1) < seq_len:
+            with torch.no_grad():
+                logits, tok_emb, pos_emb, out_dict,atten_weight = self.model.forward(idx)
+                probs = F.softmax(logits[:,-1,:], dim=-1)
+                topk_probs, topk_indices = torch.topk(probs,k, dim=-1)
+                ix = torch.multinomial(topk_probs,1)
+                xcol = torch.gather(topk_indices, -1, ix)
+                idx = torch.concat((idx,xcol),dim=1)
+
+
+        for i in range(B):
+            tokens = idx[i, :seq_len].tolist()
+            decoded = self.tokenizor.decode(tokens)
+            print(">", decoded)
+
+
+class InternalWeights:
+    def __init__(self, model : nn.Module, tokenizor : Tokenizor, device = 'cpu'):
+        self.model : nn.Module = model
+        self.device : str = device 
+        self.tokenizor : Encoding = tokenizor
+
+
+    def get_atten(self, idx : torch.tensor, seq_len : int):
+
+        (B,T) = idx.size()
+        print(f"Batch Size {B}")
+        print(f"Current Token lenght {T}")
+        k = 50
+
+    
+        with torch.no_grad():
+            logits, tok_emb, pos_emb, out_dict,atten_weight = self.model.forward(idx)
+        return atten_weight
+
+
+
+
 if __name__ == "__main__":
 
     device = 'cpu'
