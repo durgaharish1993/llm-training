@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from dataclasses import dataclass
 import torch 
 import math 
-from transformers import GPT2LMHeadModel
+#from transformers import GPT2LMHeadModel
 import time 
 
 @dataclass
