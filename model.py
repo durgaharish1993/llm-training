@@ -73,7 +73,6 @@ class AttentionWrapper(nn.Module):
 
         return x, att_weights 
 
-
 class GPTModel(nn.Module):
     def __init__(self,config : GPTConfig):
         super().__init__()
@@ -182,7 +181,6 @@ class GPTModel(nn.Module):
 
 
 
-
 from dataset import DataLoader
 
 @dataclass 
@@ -215,8 +213,6 @@ class Trainer:
             tok_sec   =  (B * T)/ (e_time - s_time)
             print(f"step {i}, loss : {loss.item()}, time : {time_diff : .2f}ms, tok/sec : {tok_sec : .1f} ")
 
-
-
 class Tokenizor:
 
     def __init__(self, tokenizor = None ):
@@ -225,14 +221,16 @@ class Tokenizor:
     
     def tokenize(self, input : str, B : int) -> torch.tensor:
         toks = self.tokenizor.encode(input)
-            
         idx = torch.tensor([toks] *B , dtype=torch.long)
-
-
         return idx 
     
-    def decode(self, idx ):
+    def decode(self, idx : torch.tensor):
+        if isinstance(idx, torch.Tensor):
+            idx = idx.tolist()  # Convert to list if it's a tensor
+        if isinstance(idx[0], list):  # Handle batch of token IDs
+            return [self.tokenizor.decode(sub_idx) for sub_idx in idx]
         return self.tokenizor.decode(idx)
+
 
 
     
